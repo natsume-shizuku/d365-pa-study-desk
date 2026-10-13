@@ -1,0 +1,12 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Open D365/PA Study Desk",
+			"type": "shell",
+			"command": "npm run preview",
+			"isBackground": true,
+			"problemMatcher": []
+		}
+	]
+}
