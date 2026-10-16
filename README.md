@@ -33,11 +33,19 @@ Card/notes browsing does not score attempts. Personal annotations autosave separ
 
 ## Storage and backups
 
-Progress lives in **IndexedDB in this browser profile and origin**. Always use **http://localhost:4173**. Another browser/profile, hostname (including 127.0.0.1), scheme, or port has separate data. Clearing site data, private browsing, or browser storage eviction can lose progress; local storage is not a backup.
+Progress lives in **IndexedDB in this browser profile and origin**. For the local app, always use **http://localhost:4173**. A hosted HTTPS site has its own storage, separate from localhost. Another browser/profile, hostname (including 127.0.0.1), scheme, or port has separate data. Clearing site data, private browsing, or browser storage eviction can lose progress; local storage is not a backup.
 
 In **Settings & backup**, choose **All study packs** or one named pack before using **Export backup**. To restore: choose the JSON backup, review its scope and counts, download and check the all-packs safety backup, acknowledge replacement, then select **Replace with backup**. An all-packs restore replaces all learning data. A one-pack restore replaces only that pack's reviews, schedules, annotations, and paused session while preserving other packs. Invalid imports leave current data unchanged. Older v1 all-packs JSON backups remain importable.
 
 Backups contain learner progress only: review events, schedules, personal annotations, shared preferences, and the saved session (including pending quiz answers). Pack backups explicitly identify their pack and contain only learning records owned by it. They contain **no card or note content snapshots** and do not replace installed study material. Keep the project/content version separately if needed. History for unavailable IDs is preserved, but missing content cannot be studied until reinstalled. Backup files include your personal notes; keep them private.
+
+## Public hosting with GitHub Pages
+
+The included [deployment workflow](.github/workflows/deploy-pages.yml) checks TypeScript, runs unit/content tests, builds the app, and publishes `dist` to GitHub Pages on pushes to `main`. In the repository's **Settings > Pages**, select **GitHub Actions** as the build source. GitHub must support Pages for the repository's visibility and account plan.
+
+Hosting makes the bundled cards and notes available to visitors. Reviews, statistics, personal annotations, preferences, and paused sessions remain in each visitor's browser. They are not uploaded to GitHub or shared with other visitors. There is no account or cloud sync.
+
+To move existing progress to the hosted site, export **All study packs** from **Settings & backup** at `http://localhost:4173`, open the hosted HTTPS site, and import that JSON using the existing restore flow. Keep the original backup private and retain the local data until you have checked the imported progress. Use the same hosted URL and browser profile for subsequent study; changing to a custom domain creates another storage origin and requires another export/import.
 
 ## Architecture and development
 
