@@ -33,13 +33,33 @@ async function ready(page: Page) {
 }
 
 async function navigate(page: Page, name: 'Dashboard' | 'Study' | 'Notes' | 'Mistakes' | 'Card Library' | 'Topics') {
+  await leaveReview(page);
   await page.getByRole('navigation', { name: 'Main navigation' })
     .getByRole('button', { name, exact: true }).click();
 }
 
 async function settings(page: Page) {
+  await leaveReview(page);
   await page.getByRole('button', { name: 'Settings & backup', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+}
+
+async function leaveReview(page: Page) {
+  const dialog = page.getByRole('dialog', { name: 'My note', exact: true });
+  if (await dialog.isVisible()) await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  const back = page.getByRole('button', { name: 'Back to decks', exact: true });
+  if (await back.isVisible()) await back.click();
+}
+
+async function openMyNote(page: Page) {
+  await page.getByRole('button', { name: 'My note', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'My note', exact: true })).toBeVisible();
+}
+
+async function endSession(page: Page) {
+  await page.getByRole('button', { name: 'Keyboard shortcuts', exact: true }).click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'End session early', exact: true }).click();
 }
 
 // These stat containers have no accessible region names in the current UI.
@@ -100,9 +120,12 @@ async function choose(page: Page, card: Card, correct = true) {
 }
 
 async function annotate(page: Page, text: string) {
+  const inReview = await page.locator('.study-stage').isVisible();
+  if (inReview && !await page.getByRole('dialog', { name: 'My note', exact: true }).isVisible()) await openMyNote(page);
   await page.getByLabel(annotationLabel, { exact: true }).fill(text);
   // Wait for debounce and completed persistence, not an arbitrary sleep.
   await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
+  if (inReview) await page.getByRole('dialog', { name: 'My note', exact: true }).getByRole('button', { name: 'Close dialog' }).click();
 }
 
 async function openFirstNote(page: Page) {
@@ -156,7 +179,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('empty dashboard has no invented performance or history', async ({ page }) => {
-  await expect(page.getByRole('heading', { name: 'Welcome to your study desk.', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your decks', exact: true })).toBeVisible();
   await expect(stat(page, 'Due for review')).toHaveText('0');
   await expect(stat(page, 'Study coverage')).toHaveText(`0 / ${pack.cards.length}`);
   await expect(stat(page, 'Recent performance')).toHaveText('—');
@@ -216,8 +239,7 @@ test('original practice answers show explanations and its restore preserves anot
   for (const option of card.options!) await expect(answer.getByText(option.rationale, { exact: true })).toBeVisible();
   await expectSources(answer, card.sourceIds, practicePack);
   await annotate(page, 'Original practice reminder.');
-  page.once('dialog', dialog => dialog.accept());
-  await page.getByRole('button', { name: 'End session early', exact: true }).click();
+  await endSession(page);
   await settings(page);
   const original = await stateOf(page);
   const backup = await downloadBytes(page, page.getByRole('button', { name: 'Export backup', exact: true }));
@@ -230,7 +252,7 @@ test('original practice answers show explanations and its restore preserves anot
   await start(page, 'Recall');
   await page.getByRole('button', { name: 'Reveal answer', exact: true }).click();
   await page.getByRole('button', { name: '1 · Again Forgot / incorrect', exact: true }).click();
-  await expect(page.getByRole('status')).toHaveText('Recorded: again. Saved locally.');
+  await expect(page.getByText('2 / 10 cards', { exact: true })).toBeVisible();
   await annotate(page, 'Keep this general-pack reminder.');
   const before = await stateOf(page);
   await settings(page);
@@ -260,7 +282,7 @@ for (const width of [1920, 768, 320]) {
     });
     expect(Math.abs(geometry.topGap - geometry.bottomGap)).toBeLessThanOrEqual(1);
     expect(Math.abs(geometry.left - (geometry.viewport - geometry.right))).toBeLessThanOrEqual(1);
-    expect(geometry.width).toBeGreaterThanOrEqual(width * 0.7);
+    expect(geometry.width).toBeGreaterThanOrEqual(width * 0.65);
     expect(geometry.left).toBeGreaterThanOrEqual(0);
     expect(geometry.right).toBeLessThanOrEqual(geometry.viewport);
     if (width === 1920) await page.screenshot({ path: testInfo.outputPath('centered-study-card.png') });
@@ -277,18 +299,18 @@ for (const width of [1920, 768, 320]) {
   });
 }
 
-test('recall Again updates history, reload resumes the answered card, and Next advances once', async ({ page }) => {
+test('recall Again saves and advances atomically; reload resumes the next unanswered card', async ({ page }) => {
   await start(page, 'Recall');
   const card = await activeCard(page);
   expect(card.kind).toBe('recall');
   await page.getByRole('button', { name: 'Reveal answer', exact: true }).click();
   await expect(page.getByText(card.answer, { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '1 · Again Forgot / incorrect', exact: true }).click();
-  await expect(page.getByRole('status')).toHaveText('Recorded: again. Saved locally.');
+  await expect(page.getByText('2 / 10 cards', { exact: true })).toBeVisible();
   const saved = await stateOf(page);
   expect(saved.events).toHaveLength(1);
   expect(saved.events[0]).toMatchObject({ cardId: card.id, rating: 'again', guessed: false, kind: 'recall' });
-  expect(saved.session).toMatchObject({ mode: 'adaptive', finished: false, index: 0, pending: [] });
+  expect(saved.session).toMatchObject({ mode: 'adaptive', finished: false, index: 1, pending: [] });
   expect(saved.schedules).toHaveLength(1);
   expect(saved.schedules[0].due - saved.events[0].at).toBe(10 * 60_000);
 
@@ -303,10 +325,7 @@ test('recall Again updates history, reload resumes the answered card, and Next a
   await page.reload();
   await ready(page);
   await page.getByRole('button', { name: 'Resume your session', exact: true }).click();
-  expect((await activeCard(page)).id).toBe(card.id);
-  await expect(page.getByRole('status')).toHaveText('Recorded: again. Saved locally.');
-  await expect(page.getByRole('button', { name: 'Reveal answer', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Next card', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Reveal answer', exact: true })).toBeVisible();
   await expect(page.getByText('2 / 10 cards', { exact: true })).toBeVisible();
   expect((await activeCard(page)).id).not.toBe(card.id);
   expect((await stateOf(page)).events).toEqual(saved.events);
@@ -404,8 +423,6 @@ test('repeated misses persist as a tag without suspending the card, even after o
   await page.getByRole('button', { name: 'Reveal answer', exact: true }).click();
   await expect(page.getByText(card.answer, { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '2 · Good Knew the essentials', exact: true }).click();
-  await expect(page.getByRole('status')).toHaveText('Recorded: good. Saved locally.');
-  await page.getByRole('button', { name: 'Finish session', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Session complete', exact: true })).toBeVisible();
   const saved = await stateOf(page);
   expect(saved.events).toHaveLength(6);
@@ -579,6 +596,7 @@ test('export and confirmed restore round-trip annotations, preferences, and a pa
   await ready(page);
   await page.getByRole('button', { name: 'Resume your session', exact: true }).click();
   expect((await activeCard(page)).id).toBe(card.id);
+  await openMyNote(page);
   await expect(page.getByLabel(annotationLabel, { exact: true })).toHaveValue('Original card annotation in the backup.');
   expect(await stateOf(page)).toEqual(original);
 });
@@ -589,11 +607,15 @@ test('keyboard shortcuts reveal, rate, and advance but do not fire while typing 
   await page.keyboard.press('Enter');
   await expect(page.getByRole('main')).toBeFocused();
   await start(page, 'Recall');
+  await expect(page.locator('.study-stage')).toBeFocused();
+  await page.keyboard.press('n');
   const annotation = page.getByLabel(annotationLabel, { exact: true });
   await annotation.focus();
-  await page.keyboard.press('Space');
-  await expect(page.getByRole('button', { name: 'Reveal answer', exact: true })).toBeVisible();
-  await page.getByRole('main').focus();
+  await page.keyboard.type('1234 abcd g? ');
+  expect((await stateOf(page)).events).toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('.study-stage')).toBeFocused();
   await page.keyboard.press('1');
   await page.keyboard.press('2');
   expect((await stateOf(page)).events).toEqual([]);
@@ -601,36 +623,195 @@ test('keyboard shortcuts reveal, rate, and advance but do not fire while typing 
   await expect(page.getByRole('heading', { name: 'What to remember', exact: true })).toBeVisible();
   await expect(page.locator('.rating-grid button')).toHaveCount(2);
   await expect(page.getByRole('button', { name: '2 · Good Knew the essentials', exact: true })).toHaveAttribute('aria-keyshortcuts', '2');
+  await expect(page.locator('.rating-grid')).toContainText('Review in 10 min');
+  await expect(page.locator('.rating-grid')).toContainText('Review in 1 day');
+  await page.keyboard.press('n');
   await annotation.focus();
   await page.keyboard.type('1234');
   expect((await stateOf(page)).events).toEqual([]);
   await expect(page.getByRole('button', { name: 'Next card', exact: true })).toHaveCount(0);
-  await page.getByRole('main').focus();
+  await page.keyboard.press('Escape');
   await page.keyboard.press('3');
   await page.keyboard.press('4');
   expect((await stateOf(page)).events).toEqual([]);
   await page.keyboard.press('1');
-  await expect(page.getByRole('status')).toHaveText('Recorded: again. Saved locally.');
+  await expect(page.getByText('2 / 10 cards', { exact: true })).toBeVisible();
   await page.keyboard.press('2');
   expect((await stateOf(page)).events).toHaveLength(1);
   await page.keyboard.press('Enter');
-  await expect(page.getByText('2 / 10 cards', { exact: true })).toBeVisible();
-  expect((await stateOf(page)).events).toHaveLength(1);
-  await page.getByRole('button', { name: 'Reveal answer', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'What to remember', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '1 · Again Forgot / incorrect', exact: true }).focus();
   await page.keyboard.press('2');
-  await expect(page.getByRole('status')).toHaveText('Recorded: good. Saved locally.');
+  await expect(page.getByText('3 / 10 cards', { exact: true })).toBeVisible();
   const saved = await stateOf(page);
   expect(saved.events.map(event => event.rating)).toEqual(['again', 'good']);
   const good = saved.events[1];
   expect(saved.schedules.find(item => item.cardId === good.cardId)!.due - good.at).toBe(24 * 60 * 60_000);
-  await page.getByRole('button', { name: 'Next card', exact: true }).click();
   await page.getByRole('button', { name: 'Reveal answer', exact: true }).click();
   await page.getByRole('button', { name: '1 · Again Forgot / incorrect', exact: true }).focus();
   await page.keyboard.press('Space');
-  await expect(page.getByRole('status')).toHaveText('Recorded: again. Saved locally.');
+  await expect(page.getByText('4 / 10 cards', { exact: true })).toBeVisible();
   expect((await stateOf(page)).events.map(event => event.rating)).toEqual(['again', 'good', 'again']);
+  // A continuous Space-only flow reveals, rates Good, and advances.
+  await page.keyboard.press('Space');
+  await page.keyboard.press('Space');
+  await expect(page.getByText('5 / 10 cards', { exact: true })).toBeVisible();
+  expect((await stateOf(page)).events.map(event => event.rating)).toEqual(['again', 'good', 'again', 'good']);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('heading', { name: 'Your decks', exact: true })).toBeVisible();
 });
+
+test('multiple choice supports number and letter keys, guessed answers, and keyboard-only continuation', async ({ page }) => {
+  await start(page, 'Multiple choice');
+  const card = await activeCard(page);
+  await page.keyboard.press('Enter');
+  expect((await stateOf(page)).events).toEqual([]);
+  await expect(page.getByRole('button', { name: 'Check answer', exact: true })).toBeDisabled();
+  for (let index = 0; index < card.options!.length; index++) {
+    await page.keyboard.press(String(index + 1));
+    await expect(page.getByRole('radio').nth(index)).toBeChecked();
+  }
+  const correct = card.options!.findIndex(option => option.id === card.correctOptionId);
+  await page.keyboard.press(String.fromCharCode(97 + correct));
+  await page.keyboard.press('g');
+  await expect(page.getByLabel(guessedLabel, { exact: true })).toBeChecked();
+  await page.keyboard.press('?');
+  await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts', exact: true })).toBeVisible();
+  await page.keyboard.press('1');
+  await page.keyboard.press('Enter');
+  expect((await stateOf(page)).events).toEqual([]);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('n');
+  await page.getByLabel(annotationLabel, { exact: true }).fill('1 2 3 4 a b c d g');
+  await page.keyboard.press('Enter');
+  expect((await stateOf(page)).events).toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('radio').nth(correct)).toBeChecked();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('status')).toHaveText('Correct, but guessed — scheduled for an earlier review. Saved locally.');
+  const saved = await stateOf(page);
+  expect(saved.events).toHaveLength(1);
+  expect(saved.events[0]).toMatchObject({ cardId: card.id, selectedOptionId: card.correctOptionId, guessed: true, rating: 'hard' });
+  await page.keyboard.press('1');
+  expect((await stateOf(page)).events).toEqual(saved.events);
+  await page.keyboard.press('Space');
+  await expect(page.getByText('2 / 10 cards', { exact: true })).toBeVisible();
+  await expect(page.locator('.study-stage')).toBeFocused();
+  await expect(page.getByLabel(guessedLabel, { exact: true })).not.toBeChecked();
+  await expect(page.getByRole('button', { name: 'Check answer', exact: true })).toBeDisabled();
+  // Radio arrow navigation works, and Enter checks the focused option.
+  await page.getByRole('radio').first().focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('radio').nth(1)).toBeChecked();
+  await expect(page.getByRole('radio').nth(1)).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('button', { name: 'Next card', exact: true })).toBeVisible();
+  expect((await stateOf(page)).events).toHaveLength(2);
+});
+
+test('a complete keyboard-only quiz commits all answers together on its final card', async ({ page }) => {
+  await start(page, 'Multiple choice', true);
+  for (let index = 0; index < 10; index++) {
+    const card = await activeCard(page);
+    const correct = card.options!.findIndex(option => option.id === card.correctOptionId);
+    await page.keyboard.press(String(correct + 1));
+    await page.keyboard.press('Enter');
+    if (index < 9) {
+      await expect(page.getByText(`${index + 2} / 10 cards`, { exact: true })).toBeVisible();
+      const pending = await stateOf(page);
+      expect(pending.events).toEqual([]);
+      expect(pending.schedules).toEqual([]);
+      expect(pending.session!.pending).toHaveLength(index + 1);
+      await expect(page.getByRole('heading', { name: 'What to remember', exact: true })).toHaveCount(0);
+    }
+  }
+  await expect(page.getByRole('heading', { name: 'Session complete', exact: true })).toBeVisible();
+  const saved = await stateOf(page);
+  expect(saved.events).toHaveLength(10);
+  expect(saved.events.every(event => event.rating === 'good')).toBe(true);
+  expect(saved.session).toMatchObject({ finished: true, index: 10, pending: [] });
+});
+
+test('failed recall save keeps the revealed card available for retry without advancing', async ({ page }) => {
+  await start(page, 'Recall');
+  const card = await activeCard(page);
+  await page.keyboard.press('Space');
+  const before = await stateOf(page);
+  await page.evaluate(() => {
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function () {
+      IDBObjectStore.prototype.put = put;
+      throw new DOMException('Simulated storage write failure', 'QuotaExceededError');
+    };
+  });
+  await page.keyboard.press('2');
+  await expect(page.getByRole('alert')).toContainText('Not saved');
+  expect((await activeCard(page)).id).toBe(card.id);
+  expect(await stateOf(page)).toEqual(before);
+  await expect(page.locator('.rating-grid button')).toHaveCount(2);
+  await page.keyboard.press('2');
+  await expect(page.getByText('2 / 10 cards', { exact: true })).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect((await stateOf(page)).events).toHaveLength(1);
+});
+
+for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 844, height: 390 }, { width: 1024, height: 768 }, { width: 1440, height: 900 }, { width: 2535, height: 1311 }]) {
+  test(`review actions remain reachable at ${viewport.width}×${viewport.height}, including long answers`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport);
+    await page.getByRole('button', { name: 'Switch to dark theme', exact: true }).click();
+    await page.screenshot({ path: testInfo.outputPath('decks-dark.png'), fullPage: true });
+    await start(page, 'Multiple choice');
+    const card = await activeCard(page);
+    const assertDock = async () => {
+      const geometry = await page.locator('.review-actions').evaluate(element => {
+        const dock = element.getBoundingClientRect();
+        const stage = document.querySelector('.study-stage')!.getBoundingClientRect();
+        const panel = document.querySelector('.study-layout')!.getBoundingClientRect();
+        return { top: dock.top, bottom: dock.bottom, stageBottom: stage.bottom, height: window.innerHeight,
+          panelTop: panel.top, panelBottom: panel.bottom, panelHeight: panel.height,
+          width: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth };
+      });
+      expect(geometry.bottom).toBeLessThanOrEqual(geometry.height + 1);
+      if (viewport.width >= 1024 && viewport.height >= 600) {
+        expect(geometry.panelHeight).toBeLessThanOrEqual(Math.min(760, viewport.height - 160));
+        expect(geometry.panelTop).toBeGreaterThan(80);
+        expect(geometry.bottom).toBeLessThan(viewport.height - 30);
+        expect(Math.abs(geometry.panelBottom - geometry.bottom)).toBeLessThanOrEqual(1);
+      } else expect(geometry.bottom).toBeGreaterThanOrEqual(geometry.height - 1);
+      expect(geometry.top).toBeGreaterThanOrEqual(geometry.stageBottom - 1);
+      expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.width);
+      const button = page.locator('.review-action-buttons button').first();
+      const box = await button.boundingBox();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+      expect(box!.y).toBeGreaterThanOrEqual(0);
+    };
+    await assertDock();
+    await page.screenshot({ path: testInfo.outputPath('multiple-choice-dark.png') });
+    await choose(page, card);
+    await page.getByRole('button', { name: 'Check answer', exact: true }).click();
+    await expect(page.getByRole('status')).toContainText('Correct');
+    await page.locator('.study-stage').evaluate(element => element.scrollTo({ top: element.scrollHeight }));
+    await assertDock();
+    await page.getByRole('button', { name: 'Next card', exact: true }).click();
+    await expect(page.getByText('2 / 10 cards', { exact: true })).toBeVisible();
+    expect(await page.locator('.study-stage').evaluate(element => element.scrollTop)).toBe(0);
+    await endSession(page);
+    await navigate(page, 'Dashboard');
+    await start(page, 'Recall');
+    if (viewport.width >= 1024 && viewport.height >= 600) {
+      const gap = await page.evaluate(() => document.querySelector('.review-actions')!.getBoundingClientRect().top
+        - document.querySelector('.study-card')!.getBoundingClientRect().bottom);
+      expect(gap, 'Desktop controls stay close to a short recall card').toBeLessThanOrEqual(32);
+      await page.screenshot({ path: testInfo.outputPath('compact-recall-desktop.png') });
+    }
+    await page.getByRole('button', { name: 'Reveal answer', exact: true }).click();
+    await assertDock();
+    for (const button of await page.locator('.rating-grid button').all()) await button.click({ trial: true });
+    await page.screenshot({ path: testInfo.outputPath('recall-answer-dark.png') });
+    await page.getByRole('button', { name: '2 · Good Knew the essentials', exact: true }).click();
+    await expect(page.getByText('2 / 10 cards', { exact: true })).toBeVisible();
+  });
+}
 
 test('source links are safe and card dialog traps focus, closes on Escape, and restores focus', async ({ page }) => {
   await openFirstNote(page);
@@ -823,7 +1004,7 @@ for (const width of [1920, 1440, 768, 390, 320]) {
         if (destination === 'Settings') await settings(page);
         else await navigate(page, destination);
         await expect(page.getByRole('heading', {
-          name: destination === 'Dashboard' ? 'Welcome to your study desk.' : destination, exact: true, level: 1,
+          name: destination === 'Dashboard' ? 'Your decks' : destination, exact: true, level: 1,
         })).toBeVisible();
         await expectResponsiveShell(page, width >= 1440);
         if (destination === 'Dashboard') {
@@ -862,9 +1043,17 @@ test('second tab is read-only until the writer closes and the reader reloads', a
   await expect(second.getByRole('radio')).toHaveCount(4);
   for (const radio of await second.getByRole('radio').all()) await expect(radio).toBeDisabled();
   await expect(second.getByLabel(guessedLabel, { exact: true })).toBeDisabled();
+  await openMyNote(second);
   await expect(second.getByLabel(annotationLabel, { exact: true })).toBeDisabled();
+  await second.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await expect(second.getByRole('button', { name: 'Check answer', exact: true })).toBeDisabled();
+  await second.getByRole('button', { name: 'Keyboard shortcuts', exact: true }).click();
   await expect(second.getByRole('button', { name: 'End session early', exact: true })).toBeDisabled();
+  await second.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await second.locator('.study-stage').focus();
+  await second.keyboard.press('1');
+  await second.keyboard.press('Enter');
+  expect(await stateOf(second)).toEqual(original);
   await settings(second);
   await expect(second.getByRole('button', { name: 'Save preferences', exact: true })).toBeDisabled();
   await expect(second.getByLabel('Choose backup', { exact: true })).toBeDisabled();
@@ -873,6 +1062,7 @@ test('second tab is read-only until the writer closes and the reader reloads', a
   await second.reload();
   await ready(second);
   await second.getByRole('button', { name: 'Resume your session', exact: true }).click();
+  await openMyNote(second);
   await expect(second.getByLabel(annotationLabel, { exact: true })).toBeEnabled();
   await annotate(second, 'The second tab now owns the writer lock.');
   expect((await stateOf(second)).annotations).toEqual([

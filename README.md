@@ -26,7 +26,13 @@ Initial dependency installation needs internet access. Studying uses bundled con
 - **Practice quiz:** multiple choice only; feedback and committed results appear after completion. An unfinished quiz can resume; ending it early discards its pending answers.
 - **Practice all:** includes cards that are not due. Session sizes are 10, 20, or 40, with topic, difficulty, format, and tag filters.
 
-Recall uses **Again (1)** and **Good (2)** after revealing the answer. Press **Space** to reveal, **1** for Again, **2** for Good, and **Enter** to advance after rating. You can also click the buttons. Shortcuts are inactive while typing annotations or using other form controls. The active study card is centered in a wide study area that expands for long answers.
+The home screen lists your decks with New, Due, and total card counts. Select a deck, then start or resume a session. Desktop review uses a centered panel sized to its content, with the action bar directly below the card. Long explanations scroll inside the panel. Phones, tablets, and short landscape windows keep the full-height layout with controls at the bottom. **Back to decks** pauses your session. The study-pack selector stays available.
+
+Recall uses **Again (1)** and **Good (2)**. A rating saves and advances immediately; the buttons show the next review interval. Press **Space or Enter** to reveal and again to rate Good. Press **1** for Again or **2** for Good after reveal.
+
+For multiple choice, **1–4 or A–D** select an answer, **G** toggles guessed, and **Space or Enter** checks the selection. Read the feedback, then press **Space or Enter** to continue. Arrow keys move between focused choices; Enter checks a focused choice. In a quiz, checking advances immediately and explanations appear at completion.
+
+Press **N** for your personal note, **?** for the shortcut guide, or **Escape** to pause and return to decks. Escape closes an open dialog first. Shortcuts are inactive while typing or using other form controls. Space and Enter activate a focused button normally. Touch and mouse controls support the same flow. The shortcut guide also contains **End session early**.
 
 Wrong MCQs count as Again; correct guesses as Hard (uncertain, **not a miss**); confident correct answers as Good. Good progresses through 1, 3, 7, 14, 30, and 60 days; Again schedules review in ten minutes. Historical Hard/Easy ratings and their schedules remain compatible with backups. Start a later Due or Adaptive session to revisit a card.
 

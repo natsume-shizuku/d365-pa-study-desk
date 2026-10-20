@@ -75,7 +75,8 @@ Do not remove migration behavior or change backup semantics without adding unit 
 - Maintain keyboard access, visible focus, 44px touch targets, reduced-motion handling, and no horizontal overflow from 320px mobile through wide desktop.
 - Do not display internal option IDs. [src/optionLabels.ts](src/optionLabels.ts) derives visible A-D labels from option order.
 - Do not constrain study questions or note prose to an unnecessarily narrow text column; the user prefers efficient use of wide screens.
-- Center active study cards in the available study area, keeping room for long answers. Recall ratings are Again (1) and Good (2); preserve legacy Hard/Easy data and MCQ guessed-answer behavior.
+- Center short study cards in the available study area; scroll long answers independently of the visible bottom action bar. Recall ratings are Again (1) and Good (2), saving and advancing atomically. Space/Enter reveals, then rates Good. MCQs use 1–4/A–D to select, G to mark guessed, and Space/Enter to check and continue. Preserve legacy Hard/Easy data and MCQ guessed-answer behavior.
+- Keep review shortcuts inactive in editable controls and dialogs; restore keyboard focus to the review area after advancing. Never advance or hide the answer after a failed save.
 
 ## Persistence and Runtime Boundaries
 

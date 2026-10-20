@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowRight, BookOpen, Brain, Check, ChevronRight, CircleHelp, Download, ExternalLink, Flag, Layers, LayoutDashboard, Moon, Play, Search, Settings as SettingsIcon, Sparkles, Sun, Target, Upload, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, Brain, Check, ChevronRight, CircleHelp, Download, ExternalLink, Flag, Keyboard, Layers, LayoutDashboard, Moon, Play, Search, Settings as SettingsIcon, Sparkles, Sun, Target, Upload, X } from 'lucide-react';
 import { packs } from './content/catalog';
 import { cardStatus, eligibleEvents, nextSchedule, selectCards, topicStats } from './engine';
 import { makeBackup, mergePackState, parseBackupEnvelope, type BackupScope, type ParsedBackup } from './validation';
@@ -94,8 +94,8 @@ function appendEvent(state: LearnerState, event: ReviewEvent): LearnerState {
   ] };
 }
 
-function StudyView({ pack, state, update, writable, onNote, topic, setTopic }: {
-  pack: Pack; state: LearnerState; update: Update; writable: boolean; onNote: (id: string) => void; topic: string; setTopic: (value: string) => void;
+function StudyView({ pack, state, update, writable, onNote, topic, setTopic, onPause }: {
+  pack: Pack; state: LearnerState; update: Update; writable: boolean; onNote: (id: string) => void; topic: string; setTopic: (value: string) => void; onPause: () => void;
 }) {
   const [mode, setMode] = useState<StudySession['mode']>('adaptive');
   const [difficulty, setDifficulty] = useState('all');
@@ -107,12 +107,19 @@ function StudyView({ pack, state, update, writable, onNote, topic, setTopic }: {
   const [choice, setChoice] = useState('');
   const [guessed, setGuessed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [showAnnotation, setShowAnnotation] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const stageRef = useRef<HTMLDivElement>(null);
   const submitting = useRef(false);
   const session = state.session?.packId === pack.id ? state.session : null;
   const active = session && !session.finished ? session : null;
   const card = active ? pack.cards.find(item => item.id === active.cardIds[active.index]) : undefined;
   const result = active ? state.events.find(event => event.cardId === card?.id && event.id === `${active.id}:${active.index}`) : undefined;
-  useEffect(() => { setRevealed(false); setChoice(''); setGuessed(false); }, [active?.id, active?.index]);
+  useEffect(() => {
+    setRevealed(false); setChoice(''); setGuessed(false); setShowAnnotation(false);
+    if (active) { stageRef.current?.scrollTo({ top: 0 }); stageRef.current?.focus({ preventScroll: true }); }
+    else if (session?.finished) { document.getElementById('main')?.focus(); window.scrollTo({ top: 0 }); }
+  }, [active?.id, active?.index]);
   const run = async (action: () => Promise<void>) => {
     if (submitting.current) return;
     submitting.current = true; setBusy(true);
@@ -129,7 +136,7 @@ function StudyView({ pack, state, update, writable, onNote, topic, setTopic }: {
     await update(current => ({ ...current, session: { id: crypto.randomUUID(), packId: pack.id, mode, cardIds: selected.map(item => item.id), index: 0, startedAt: Date.now(), finished: false, pending: [] } }));
   });
   const rate = (rating: Rating) => run(async () => {
-    if (!active || !card || result) return;
+    if (!active || !card || result || (card.kind === 'mcq' && !card.options?.some(option => option.id === choice))) return;
     const event: ReviewEvent = { id: `${active.id}:${active.index}`, sessionId: active.id, packId: pack.id, cardId: card.id, revision: card.revision, at: Date.now(), rating, kind: card.kind, guessed: card.kind === 'mcq' && guessed, eligible: true,
       ...(card.kind === 'mcq' ? { selectedOptionId: choice } : {}),
     };
@@ -148,7 +155,9 @@ function StudyView({ pack, state, update, writable, onNote, topic, setTopic }: {
         }
         return next;
       }
-      return { ...appendEvent(current, event), session: { ...currentSession, pending: [] } };
+      // Recall is already revealed when rated: save and advance in one transaction.
+      const index = currentSession.index + (card.kind === 'recall' ? 1 : 0);
+      return { ...appendEvent(current, event), session: { ...currentSession, index, finished: index >= currentSession.cardIds.length, pending: [] } };
     });
   });
   const next = () => run(async () => {
@@ -161,34 +170,70 @@ function StudyView({ pack, state, update, writable, onNote, topic, setTopic }: {
   });
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (!writable || busy || !card || e.repeat || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return;
-      if (e.target instanceof Element && (e.target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="dialog"]')
-        || (e.target.closest('button,a') && !e.target.closest('[data-recall-control]')))) return;
-      if (e.code === 'Space' && card.kind === 'recall' && !result && !(e.target instanceof Element && e.target.closest('button,a'))) { e.preventDefault(); setRevealed(true); }
-      const recallRating = recallRatings.find(item => item.key === e.key);
-      if (revealed && card.kind === 'recall' && !result && recallRating) { e.preventDefault(); void rate(recallRating.rating); }
-      if (e.key === 'Enter' && result) void next();
+      if (e.repeat && e.target instanceof Element && e.target.closest('[data-study-control]')) e.preventDefault();
+      if (!writable || busy || !card || e.repeat || e.isComposing || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey || showAnnotation || showHelp || document.querySelector('[role="dialog"]')) return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="dialog"]')) return;
+      if (target?.closest('button,a,summary') && !target.closest('[data-study-control]')) return;
+      const key = e.key.toLowerCase();
+      const activate = e.code === 'Space' || key === 'enter';
+      // Space/Enter on a focused button retain the button's native behavior.
+      const nativeButton = Boolean(target?.closest('button,a')) && !(key === 'enter' && target?.closest('[role="radio"]'));
+      if (key === '?') { e.preventDefault(); setShowHelp(true); return; }
+      if (key === 'n') { e.preventDefault(); setShowAnnotation(true); return; }
+      if (key === 'escape') { e.preventDefault(); onPause(); return; }
+      if (result) {
+        if (activate && !nativeButton) { e.preventDefault(); void next(); }
+        return;
+      }
+      if (card.kind === 'recall') {
+        if (activate && !nativeButton) { e.preventDefault(); if (revealed) void rate('good'); else setRevealed(true); }
+        const recallRating = recallRatings.find(item => item.key === key);
+        if (revealed && recallRating) { e.preventDefault(); void rate(recallRating.rating); }
+      } else {
+        const index = /^[1-4]$/.test(key) ? Number(key) - 1 : /^[a-d]$/.test(key) ? key.charCodeAt(0) - 97 : -1;
+        const option = card.options?.[index];
+        if (option) { e.preventDefault(); setChoice(option.id); }
+        if (key === 'g') { e.preventDefault(); setGuessed(value => !value); }
+        if (activate && !nativeButton) { e.preventDefault(); if (choice) void rate(choice !== card.correctOptionId ? 'again' : guessed ? 'hard' : 'good'); }
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   });
 
-  if (active && card) return <div className="study-layout"><div className="study-toolbar"><span className="eyebrow">{active.mode} session</span><span>{active.index + 1} / {active.cardIds.length} cards</span></div>
-    <div className="progress-track"><div className="progress-fill" style={{ width: `${active.index / active.cardIds.length * 100}%` }} /></div>
-    <div className="study-stage"><article className="study-card"><div className="card-topline"><span className="badge">{pack.topics.find(t => t.id === card.topicId)?.title}</span><span>{card.difficulty} · {card.kind === 'recall' ? 'Recall' : 'Multiple choice'}</span></div>
-      <h2 className="card-prompt">{card.prompt}</h2>
-      {card.kind === 'recall' && !result && !revealed && <><p className="stat-detail">Say your answer out loud or think through the steps before revealing.</p><button className="button primary" data-recall-control aria-keyshortcuts="Space" onClick={() => setRevealed(true)}>Reveal answer <span aria-hidden="true">Space</span></button><p className="stat-detail">Space to reveal · 1 for Again · 2 for Good</p></>}
-      {card.kind === 'mcq' && !result && <><div className="options" role="radiogroup" aria-label="Answer choices">{card.options?.map(option => <button role="radio" aria-checked={choice === option.id} className={`option ${choice === option.id ? 'selected' : ''}`} key={option.id} disabled={busy || !writable} onClick={() => setChoice(option.id)}><strong>{optionLabel(card, option.id)}.</strong> {option.text}</button>)}</div>
-        <label className="field"><span><input type="checkbox" checked={guessed} onChange={e => setGuessed(e.target.checked)} disabled={busy || !writable} /> I guessed / I’m not confident</span></label>
-        <button className="button primary" disabled={!choice || busy || !writable} onClick={() => void rate(choice !== card.correctOptionId ? 'again' : guessed ? 'hard' : 'good')}>{active.mode === 'quiz' ? 'Save answer & continue' : 'Check answer'} <ArrowRight size={16} /></button></>}
+  if (active && card) return <div className="study-layout">
+    <div className="review-toolbar"><div className="review-progress"><span className="eyebrow">{active.mode} session</span><span>{active.index + 1} / {active.cardIds.length} cards</span><div className="progress-track" aria-hidden="true"><div className="progress-fill" style={{ width: `${active.index / active.cardIds.length * 100}%` }} /></div></div><div className="review-tools"><button className="button ghost small" onClick={() => setShowAnnotation(true)} aria-keyshortcuts="N"><BookOpen size={16} />My note</button><button className="icon-button" aria-label="Keyboard shortcuts" onClick={() => setShowHelp(true)}><Keyboard size={18} /></button></div></div>
+    <div className="study-stage" ref={stageRef} tabIndex={-1} role="region" aria-labelledby="current-question"><article className="study-card"><div className="card-topline"><span className="badge">{pack.topics.find(t => t.id === card.topicId)?.title}</span><span>{card.difficulty} · {card.kind === 'recall' ? 'Recall' : 'Multiple choice'}</span></div>
+      <h2 className="card-prompt" id="current-question">{card.prompt}</h2>
+      {card.kind === 'recall' && !result && !revealed && <p className="recall-prompt">Think of your answer, then reveal it below.</p>}
+      {card.kind === 'mcq' && !result && <><div className="options" role="radiogroup" aria-label="Answer choices">{card.options?.map((option, index) => <button data-study-control role="radio" aria-label={`${optionLabel(card, option.id)}. ${option.text}`} aria-keyshortcuts={`${index + 1} ${optionLabel(card, option.id)}`} aria-checked={choice === option.id} className={`option ${choice === option.id ? 'selected' : ''}`} key={option.id} disabled={busy || !writable} onClick={() => setChoice(option.id)} onKeyDown={e => {
+        if (['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Home', 'End'].includes(e.key)) {
+          e.preventDefault(); const length = card.options!.length;
+          const nextIndex = e.key === 'Home' ? 0 : e.key === 'End' ? length - 1 : (index + (['ArrowDown', 'ArrowRight'].includes(e.key) ? 1 : -1) + length) % length;
+          setChoice(card.options![nextIndex].id);
+          (e.currentTarget.parentElement?.children[nextIndex] as HTMLElement)?.focus();
+        }
+      }}><strong>{optionLabel(card, option.id)}.</strong><span>{option.text}</span><kbd aria-hidden="true">{index + 1}</kbd></button>)}</div>
+        <label className="guess-control"><input type="checkbox" aria-label="I guessed / I’m not confident" aria-keyshortcuts="G" checked={guessed} onChange={e => setGuessed(e.target.checked)} disabled={busy || !writable} /> I guessed / I’m not confident <kbd aria-hidden="true">G</kbd></label></>}
       {(result || (revealed && card.kind === 'recall')) && <>{result && <div className={`notice ${result.rating === 'again' ? 'error' : 'success'}`} role="status">{card.kind === 'mcq' ? result.rating === 'again' ? `Not quite. You chose ${optionLabel(card, result.selectedOptionId)}.` : result.guessed ? 'Correct, but guessed — scheduled for an earlier review.' : 'Correct — nicely done.' : `Recorded: ${result.rating}.`} Saved locally.</div>}
         <CardAnswer card={card} pack={pack} onNote={onNote} />
-        {!result && <div className="rating-grid">{recallRatings.map(({ rating, key, label, description }) => <button key={rating} className={`button secondary ${rating}`} data-recall-control aria-keyshortcuts={key} disabled={busy || !writable} onClick={() => void rate(rating)}><strong>{key} · {label}</strong><small>{description}</small></button>)}</div>}
       </>}
     </article></div>
-    <div className="study-footer"><span>Progress saves after each answer. Leave this tab to pause.</span>{result && <button className="button primary" disabled={busy || !writable} onClick={() => void next()}>{active.index + 1 === active.cardIds.length ? 'Finish session' : 'Next card'}<ArrowRight size={16} /></button>}</div>
-    <Annotation key={`${pack.id}:${card.id}`} id={`${pack.id}:${card.id}`} packId={pack.id} state={state} update={update} writable={writable} />
-    <button className="button ghost small" disabled={busy || !writable} onClick={() => { if (confirm(active.mode === 'quiz' ? 'End this quiz? Unfinished quiz answers will not count toward progress.' : 'End this session? Answers already recorded will be kept.')) void run(() => update(current => ({ ...current, session: null }))); }}>End session early</button>
+    <div className="review-actions"><p className="keyboard-hint">{result ? 'Space / Enter · next card' : card.kind === 'mcq' ? '1–4 or A–D · choose   G · guessed   Space / Enter · check' : revealed ? '1 · Again   2 / Space / Enter · Good' : 'Space / Enter · reveal answer'}</p><div className="review-action-buttons">
+      {result ? <button className="button primary" data-study-control aria-keyshortcuts="Space Enter" disabled={busy || !writable} onClick={() => void next()}>{active.index + 1 === active.cardIds.length ? 'Finish session' : 'Next card'}<ArrowRight size={16} /></button>
+      : card.kind === 'mcq' ? <button className="button primary" data-study-control aria-keyshortcuts="Space Enter" disabled={!choice || busy || !writable} onClick={() => void rate(choice !== card.correctOptionId ? 'again' : guessed ? 'hard' : 'good')}>{active.mode === 'quiz' ? 'Save answer & continue' : 'Check answer'}<ArrowRight size={16} /></button>
+      : !revealed ? <button className="button primary" data-study-control aria-keyshortcuts="Space Enter" disabled={busy || !writable} onClick={() => setRevealed(true)}>Reveal answer</button>
+      : <div className="rating-grid">{recallRatings.map(({ rating, key, label, description }) => {
+        const at = Date.now();
+        const preview = nextSchedule(state.schedules.find(item => item.cardId === card.id && item.packId === pack.id), { id: 'preview', sessionId: active.id, packId: pack.id, cardId: card.id, revision: card.revision, at, rating, kind: 'recall', guessed: false, eligible: true });
+        const delay = preview.due - at;
+        const days = Math.round(delay / 86400000);
+        return <button key={rating} className={`button secondary ${rating}`} data-study-control aria-label={`${key} · ${label} ${description}`} aria-keyshortcuts={key} disabled={busy || !writable} onClick={() => void rate(rating)}><strong><kbd aria-hidden="true">{key}</kbd> {label}</strong><small>Review in {delay < 86400000 ? `${Math.round(delay / 60000)} min` : `${days} ${days === 1 ? 'day' : 'days'}`}</small></button>;
+      })}</div>}
+    </div><span className="review-save">{active.mode === 'quiz' ? 'Quiz answers save together when you finish.' : 'Progress saves on this device.'}</span></div>
+    {showAnnotation && <Modal title="My note" onClose={() => setShowAnnotation(false)}><Annotation key={`${pack.id}:${card.id}`} id={`${pack.id}:${card.id}`} packId={pack.id} state={state} update={update} writable={writable} /></Modal>}
+    {showHelp && <Modal title="Keyboard shortcuts" onClose={() => setShowHelp(false)}><dl className="shortcut-list"><dt>Space / Enter</dt><dd>Reveal a flashcard; rate Good after reveal. Check a selected choice; advance after feedback.</dd><dt>1 / 2</dt><dd>Recall: Again / Good. Saves and advances.</dd><dt>1–4 / A–D</dt><dd>Multiple choice: select an answer.</dd><dt>G</dt><dd>Toggle guessed on a multiple-choice question.</dd><dt>N / ?</dt><dd>Open your note / this shortcut guide.</dd><dt>Escape</dt><dd>Close a dialog, or pause and return to your decks.</dd></dl><p>Shortcuts pause while you type or use other form controls. Space and Enter activate a focused button normally.</p><button className="button danger" disabled={busy || !writable} onClick={() => { if (confirm(active.mode === 'quiz' ? 'End this quiz? Unfinished quiz answers will not count toward progress.' : 'End this session? Answers already recorded will be kept.')) void run(async () => { await update(current => ({ ...current, session: null })); setShowHelp(false); }); }}>End session early</button></Modal>}
   </div>;
   if (active && !card) return <div className="notice error">A card in your saved session is no longer installed. Your history is preserved. <button disabled={!writable} onClick={() => void update(current => ({ ...current, session: null })).catch(noopCatch)}>Clear this session</button></div>;
   const completed = session?.finished ? session : null;
@@ -197,7 +242,7 @@ function StudyView({ pack, state, update, writable, onNote, topic, setTopic }: {
     {completed && <section className="panel"><div className="section-heading"><h2>Session complete</h2><Check size={24} /></div><p>{completedEvents.length} answers recorded. {completed.mode === 'quiz' ? `${completedEvents.filter(e => e.rating !== 'again').length} correct (including guesses).` : 'Keep building understanding, not just a score.'}</p>
       <div className="quiz-results">{completedEvents.map(event => { const item = pack.cards.find(c => c.id === event.cardId); return item && <details className="result-item" key={event.id}><summary><span className={`badge ${event.rating === 'again' ? 'weak' : 'neutral'}`}>{event.rating}{event.guessed ? ' · guessed' : ''}</span> {item.prompt}</summary><CardAnswer card={item} pack={pack} onNote={onNote} /></details>; })}</div>
     </section>}
-    <section className="panel"><div className="section-heading"><div><h2>Make room for a little progress.</h2><p>Choose a focused session. Twenty cards is a good place to start.</p></div><Brain size={32} /></div>
+    <section className="panel session-setup"><div className="section-heading"><div><span className="eyebrow">Review your deck</span><h2>A few cards. A little more confident.</h2><p>Choose what to review, then settle into a session.</p></div><Brain size={32} /></div>
       <div className="study-toolbar"><label className="field">Study mode<select value={mode} onChange={e => setMode(e.target.value as StudySession['mode'])}><option value="adaptive">Adaptive mix</option><option value="due">Due for review</option><option value="topic">Topic study</option><option value="quiz">Practice quiz (multiple choice)</option><option value="practice">Practice all (including not due)</option></select></label>
         <label className="field">Topic<select value={topic} onChange={e => setTopic(e.target.value)}><option value="all">All topics</option>{pack.topics.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
         <label className="field">Session length<select value={size} onChange={e => setSize(Number(e.target.value))}>{[10, 20, 40].map(n => <option key={n} value={n}>{n} cards</option>)}</select></label></div>
@@ -206,6 +251,7 @@ function StudyView({ pack, state, update, writable, onNote, topic, setTopic }: {
       {message && <div className="notice" role="status">{message}</div>}
       {state.session && state.session.packId !== pack.id && !state.session.finished && <div className="notice">Another pack has a paused session. Starting here replaces that session.</div>}
       <button className="button primary" disabled={!writable || busy} onClick={() => void start()}><Play size={18} />Start session</button>
+      <div className="session-shortcuts"><Keyboard size={20} /><span><strong>Made for your keyboard</strong><br />Space to reveal · 1 / 2 to rate · 1–4 to choose · Enter to check</span></div>
     </section>
   </>;
 }
@@ -234,7 +280,7 @@ function SettingsView({ state, update, writable, activePack }: { state: LearnerS
     <p className="stat-detail">Three consecutive confident successes across separate sessions resolve a repeat flag. Guessed-correct answers are not mistakes. Changing the threshold re-evaluates your history.</p>
     {invalid && <p className="notice error">Use whole numbers: at least 2 misses, with a window between the threshold and 100.</p>}
     <button className="button primary" disabled={!writable || invalid || busy} onClick={() => { setBusy(true); void update(current => ({ ...current, settings: { threshold, window: windowSize, sessionSize: size } })).then(() => setMessage('Study preferences saved.')).catch(noopCatch).finally(() => setBusy(false)); }}>Save preferences</button>
-  </section><section className="panel"><h2>Your data stays with you.</h2><p>Progress and annotations live in this browser, on this localhost address. They are not synced to another device. Clearing site data or using private browsing can lose them.</p>
+  </section><section className="panel"><h2>Your data stays with you.</h2><p>Progress and annotations live in this browser, at this website address. Export a backup to move your progress to another device or browser.</p>
     <label className="field">Backup scope<select value={exportPackId} onChange={event => setExportPackId(event.target.value)}><option value="all">All study packs</option>{packs.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
     <p className="stat-detail">A pack backup contains only that pack’s reviews, schedules, annotations, and paused session. Study preferences remain shared across the desk.</p>
     <div className="quick-actions"><button className="button secondary" onClick={() => download(state, exportPackId === 'all' ? { kind: 'all' } : { kind: 'pack', packId: exportPackId })}><Download size={17} />Export backup</button><label className="button secondary"><Upload size={17} />Choose backup<input className="sr-only" aria-label="Choose backup" type="file" accept="application/json,.json" disabled={!writable || busy} onChange={async e => {
@@ -243,7 +289,7 @@ function SettingsView({ state, update, writable, activePack }: { state: LearnerS
       catch (error) { setImported(null); setMessage(`Import rejected: ${String(error)}. Existing data was not changed.`); }
       e.target.value = '';
     }} /></label></div>
-    <h3>Keep the same address</h3><p>Use <strong>http://localhost:4173</strong> and the same browser profile. A different hostname or port has separate storage.</p><p className="stat-detail">Content updates preserve stable card IDs and your annotations. Download a backup regularly and before moving computers.</p>
+    <h3>Keep the same address</h3><p>Your progress here belongs to <strong>{window.location.origin}</strong> and this browser profile. Another address has separate storage.</p><p className="stat-detail">Download a backup regularly and before moving computers. Clearing site data or using private browsing can lose local progress.</p>
   </section><section className="panel"><h2>How scheduling works</h2><p>Good moves through 1, 3, 7, 14, 30, and 60-day intervals. Easy advances two steps. Hard returns sooner. Again resets the card to a ten-minute review.</p><p>When it becomes due, start a Due or Adaptive session. There is no forced immediate retry. This is a transparent study scheduler, not Anki or an official exam predictor.</p><p>Cards with a changed content revision become due again without deleting history.</p></section>
     {message && <div className="notice" role="status">{message}</div>}
     {imported && <Modal title="Restore a backup" onClose={() => !busy && setImported(null)}><p>This {importedScopeName} backup contains <strong>{imported.state.events.length} review events</strong> and <strong>{imported.state.annotations.length} annotations</strong>. {imported.scope.kind === 'all' ? 'Restoring replaces all current learning data.' : 'Restoring replaces only this pack’s learning data; other packs remain intact.'} It does not replace installed cards or notes.</p><p>First download a safety copy. Review it in your Downloads before confirming replacement.</p><BackupConfirmation onBackup={() => download(state, { kind: 'all' }, 'before-restore')} disabled={busy || !writable} onConfirm={() => {
@@ -303,8 +349,9 @@ export default function App() {
   const matchingNotes = pack.notes.filter(note => (topic === 'all' || note.topicId === topic) && `${note.title} ${note.summary} ${note.tags.join(' ')} ${note.sections.flatMap(section => section.bullets).join(' ')}`.toLowerCase().includes(search.toLowerCase()));
   const note = matchingNotes.find(item => item.id === selectedNote) ?? matchingNotes[0];
   const featuredNote = pack.notes.find(item => item.tags.includes('operator-connect')) ?? pack.notes[0];
+  const reviewing = page === 'Study' && state.session?.packId === pack.id && !state.session.finished;
   const subtitle: Record<Page, string> = {
-    Dashboard: 'Build understanding. Find your gaps. Come back a little stronger.',
+    Dashboard: 'Pick a deck. Review what is due. Keep a little time for something new.',
     Study: 'A focused space to turn information into understanding.',
     'Card Library': 'Every concept, ready when you need it. Browsing does not change your score.',
     Mistakes: 'Useful signals, not setbacks. Difficult cards always stay in your rotation.',
@@ -316,15 +363,20 @@ export default function App() {
     {page !== 'Notes' && <><label className="field">Level<select value={libraryLevel} onChange={e => setLibraryLevel(e.target.value)}><option value="all">All levels</option>{['Foundation', 'Applied', 'Advanced'].map(item => <option key={item}>{item}</option>)}</select></label><label className="field">Format<select value={libraryFormat} onChange={e => setLibraryFormat(e.target.value)}><option value="all">All formats</option><option value="recall">Recall</option><option value="mcq">Multiple choice</option></select></label></>}
   </div>;
   const noteBody = (item: Note) => <><span className="eyebrow">{pack.topics.find(t => t.id === item.topicId)?.title}</span><h2>{item.title}</h2><p>{item.summary}</p>{item.sections.map(section => <section className="note-section" key={section.heading}><h3>{section.heading}</h3><ul>{section.bullets.map(bullet => <li key={bullet}>{bullet}</li>)}</ul></section>)}<div className="card-tags">{item.tags.map(tag => <span className="tag" key={tag}>{tag}</span>)}</div><Sources ids={item.sourceIds} pack={pack} /><h3>Put it into practice</h3><div className="related-notes">{pack.cards.filter(card => card.noteIds.includes(item.id)).map(card => <button className="button ghost small" key={card.id} onClick={() => { setOverlayNote(null); setSelectedCard(card); }}>{card.prompt}<ChevronRight size={14} /></button>)}</div><Annotation key={`${pack.id}:${item.id}`} id={`${pack.id}:${item.id}`} packId={pack.id} state={state} update={update} writable={writable} /></>;
-  return <div className="app-shell"><a className="skip-link" href="#main">Skip to content</a><header className="sidebar"><div className="brand"><div className="brand-mark"><BookOpen size={24} /></div><div><div className="brand-name">D365/PA Study Desk</div><span className="brand-caption">STUDY. RECALL. IMPROVE.</span></div></div>
-    <nav aria-label="Main navigation">{nav.map(([name, Icon]) => <button aria-label={name} className={`nav-item ${page === name ? 'active' : ''}`} aria-current={page === name ? 'page' : undefined} key={name} onClick={() => navigate(name)}><Icon size={19} />{name}{name === 'Mistakes' && repeatCount > 0 && <span className="nav-count">{repeatCount}</span>}</button>)}</nav>
+  return <div className={`app-shell ${reviewing ? 'review-mode' : ''}`}><a className="skip-link" href="#main">Skip to content</a><header className="sidebar" hidden={reviewing}><div className="brand"><div className="brand-mark"><Layers size={24} /></div><div><div className="brand-name">Study Desk</div><span className="brand-caption">DYNAMICS 365 & POWER PLATFORM</span></div></div>
+    <nav aria-label="Main navigation">{nav.map(([name, Icon]) => <button aria-label={name} className={`nav-item ${page === name ? 'active' : ''}`} aria-current={page === name ? 'page' : undefined} key={name} onClick={() => navigate(name)}><Icon size={19} />{name === 'Dashboard' ? 'Decks' : name === 'Card Library' ? 'Browse' : name}{name === 'Mistakes' && repeatCount > 0 && <span className="nav-count">{repeatCount}</span>}</button>)}</nav>
     <div className="sidebar-footer"><div className="topbar-actions"><span className="local-badge">{ready ? writable ? 'Saved on this device' : 'Read-only tab' : 'Opening local storage'}</span><button className="icon-button" aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'} onClick={() => setDark(!dark)}>{dark ? <Sun size={19} /> : <Moon size={19} />}</button></div><button className={`nav-item ${page === 'Settings' ? 'active' : ''}`} aria-current={page === 'Settings' ? 'page' : undefined} onClick={() => navigate('Settings')}><SettingsIcon size={18} />Settings & backup</button></div></header>
     <div className="main-shell">
-      <main id="main" className="page" tabIndex={-1}><div className="page-heading"><div><span className="eyebrow">{pack.title}</span><h1>{page === 'Dashboard' ? 'Welcome to your study desk.' : page}</h1><p>{subtitle[page]}</p></div><div className="page-actions"><label className="pack-switcher">Study pack<select aria-label="Study pack" value={pack.id} onChange={event => switchPack(event.target.value)}>{packs.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>{page === 'Dashboard' && <button className="button secondary" onClick={() => navigate('Notes')}><BookOpen size={17} />Browse notes</button>}</div></div>
+      <main id="main" className="page" tabIndex={-1}><div className="page-heading">{reviewing ? <><h1 className="sr-only">Study</h1><button className="button ghost" aria-label="Back to decks" onClick={() => navigate('Dashboard')} aria-keyshortcuts="Escape"><ArrowLeft size={18} /><span>Back to decks</span></button></> : <div><span className="eyebrow">{page === 'Dashboard' ? 'Your daily practice' : pack.title}</span><h1>{page === 'Dashboard' ? 'Your decks' : page}</h1><p>{subtitle[page]}</p></div>}<div className="page-actions"><label className="pack-switcher"><span>Study pack</span><select aria-label="Study pack" value={pack.id} onChange={event => switchPack(event.target.value)}>{packs.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>{page === 'Dashboard' && <button className="button secondary" onClick={() => navigate('Notes')}><BookOpen size={17} />Browse notes</button>}</div></div>
         {error && <div role="alert" className="notice error">{error}</div>}
         {ready && !writable && <div className="notice" role="status">Another Study Desk tab owns local storage. This tab is read-only and shows a snapshot. Close the other tab and reload here to study or edit.</div>}
         {!ready ? <div className="empty-state"><Brain size={40} /><h2>Opening your desk…</h2><p>No sign-in needed. Loading progress from this browser.</p></div> : <>
-        {page === 'Dashboard' && <><section className="hero"><div className="hero-copy"><h2>Ready for your next study session?</h2><p>Practice a few cards, or pick a topic below to focus your review.</p></div><div className="hero-actions"><button className="button primary" onClick={() => navigate('Study')}><Play size={17} />{state.session && !state.session.finished && state.session.packId === pack.id ? 'Resume your session' : 'Start studying'}<ArrowRight size={17} /></button><span>{pack.cards.length} cards · {pack.notes.length} field notes</span></div></section>
+        {page === 'Dashboard' && <><section className="hero"><div className="hero-copy"><span className="eyebrow">Current deck</span><h2>{pack.title}</h2><p>{due ? `${due} cards are ready for review.` : 'Ready when you are. Start a mix of new and familiar cards.'}</p></div><div className="hero-actions"><button className="button primary" onClick={() => navigate('Study')}><Play size={17} />{state.session && !state.session.finished && state.session.packId === pack.id ? 'Resume your session' : 'Start studying'}<ArrowRight size={17} /></button><span>{pack.cards.length} cards · {pack.notes.length} field notes</span></div></section>
+          <section className="deck-collection" aria-label="Study decks"><div className="section-heading"><h2>Your collection</h2><span className="stat-detail">{packs.length} decks · progress kept separately</span></div><div className="deck-grid">{packs.map(item => {
+            const history = new Set(state.events.filter(event => event.packId === item.id && event.eligible).map(event => event.cardId));
+            const readyCount = item.cards.filter(card => state.schedules.some(schedule => schedule.packId === item.id && schedule.cardId === card.id && (schedule.due <= now || schedule.revision !== card.revision))).length;
+            return <button key={item.id} className={`deck-card ${item.id === pack.id ? 'selected' : ''}`} onClick={() => switchPack(item.id)} aria-pressed={item.id === pack.id}><div className="deck-card-title"><Layers size={22} /><strong>{item.title}</strong><ChevronRight size={18} /></div><div className="deck-counts"><span><b>{item.cards.filter(card => !history.has(card.id)).length}</b> New</span><span><b>{readyCount}</b> Due</span><span><b>{item.cards.length}</b> Cards</span></div><span className="deck-selected">{item.id === pack.id ? 'Selected deck' : 'Select deck'}</span></button>;
+          })}</div></section>
           <div className="stat-grid4">{[
             ['Due for review', String(due), 'Previously studied cards ready to revisit', Brain],
             ['Study coverage', `${seen.size} / ${pack.cards.length}`, 'Unique cards you have answered', Layers],
@@ -339,7 +391,7 @@ export default function App() {
               <section className="panel"><h2>Keep the essentials close.</h2><p>Configuration checklists, gotchas, and sources—without the wall of documentation.</p>{featuredNote && <button className="quick-action" onClick={() => { setTopic(featuredNote.topicId); setSelectedNote(featuredNote.id); navigate('Notes'); }}><BookOpen size={22} /><span><strong>{featuredNote.title}</strong><small>{featuredNote.tags.slice(0, 3).join(' · ')}</small></span><ChevronRight size={18} /></button>}</section>
               <section className="panel"><span className="eyebrow">LEARN WITH CONFIDENCE</span><p>Original study material, grounded in official documentation. Verify licensing and regional availability before a real deployment.</p><p className="stat-detail">MCQ accuracy: {percent(stats.mcqAccuracy)} · Separate from self-rated recall.</p></section></div>
           </div></>}
-        {page === 'Study' && <StudyView key={pack.id} pack={pack} state={state} update={update} writable={writable} onNote={onNote} topic={topic} setTopic={setTopic} />}
+        {page === 'Study' && <StudyView key={pack.id} pack={pack} state={state} update={update} writable={writable} onNote={onNote} topic={topic} setTopic={setTopic} onPause={() => navigate('Dashboard')} />}
         {(page === 'Card Library' || page === 'Mistakes') && <>{page === 'Mistakes' && <><div className="segmented" aria-label="Mistake filter">{['All mistakes', 'Guessed', 'Repeat offenders', 'Resolved'].map(item => <button key={item} className={mistakeFilter === item ? 'active' : ''} aria-pressed={mistakeFilter === item} onClick={() => setMistakeFilter(item)}>{item}</button>)}</div><p className="stat-detail">Misses and guesses use the last {state.settings.window} qualifying attempts per card. Repeat tags remain until three confident successes in separate sessions. Resolved keeps the history.</p></>}{filterBar}
           <p className="stat-detail">{(page === 'Mistakes' ? mistakeCards : matchingCards).length} matching cards</p><div className="list-grid">{(page === 'Mistakes' ? mistakeCards : matchingCards).slice(0, libraryLimit).map(card => { const status = statuses.get(card.id)!; return <article className="library-card" key={card.id}><div className="card-topline"><span className="badge neutral">{card.difficulty}</span><span>{card.kind === 'recall' ? 'Recall' : 'Multiple choice'}</span></div><h3>{card.prompt}</h3><p>{pack.topics.find(item => item.id === card.topicId)?.title}</p><div className="card-tags">{status.repeat && <span className="badge weak">repeat-offender</span>}{status.resolved && <span className="badge strong">Resolved</span>}{card.tags.slice(0, 3).map(tag => <span className="tag" key={tag}>{tag}</span>)}</div>{page === 'Mistakes' && <><p className="stat-detail">{status.misses} recent misses · {status.guesses} guesses</p><div className="review-history" aria-label="Recent outcomes">{status.recent.map(event => <span className={`history-dot ${event.rating}`} key={event.id} title={`${event.rating}${event.guessed ? ' (guessed)' : ''} — ${new Date(event.at).toLocaleDateString()}`} />)}</div></>}<button className="button ghost" onClick={() => setSelectedCard(card)}>Explore answer <ArrowRight size={16} /></button></article>; })}</div>
           {!(page === 'Mistakes' ? mistakeCards : matchingCards).length && <div className="empty-state"><CircleHelp size={36} /><h2>{page === 'Mistakes' ? 'Nothing in this view yet.' : 'No matching cards.'}</h2><p>{page === 'Mistakes' ? 'Study a few cards, or adjust the filters. Mistakes will become a useful review list—not a penalty.' : 'Try clearing the search or choosing all topics.'}</p><button className="button secondary" onClick={() => navigate('Study')}>Go to Study</button></div>}
