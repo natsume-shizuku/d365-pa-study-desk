@@ -1,9 +1,10 @@
 # D365/PA Study Desk
 
-An implemented local study app with two separate packs:
+An implemented local study app with three separate packs:
 
 - **Dynamics 365 Contact Center:** 250 cards (150 recall, 100 multiple choice), 40 reference notes, and nine practical implementation topics.
 - **AB-250: Contact Center AI Engineer:** 264 cards, 46 notes, and the six official skills-measured domains. It reclassifies the sourced implementation material for certification study and adds an exam-blueprint layer for weighting and AI-focused objectives.
+- **AB-250: Original Practice:** 36 original cards (18 recall, 18 multiple choice), six notes, and 19 Microsoft Learn sources reviewed on **2026-10-19**. Each of the six domains has six cards. This is supplemental practice with explanations for every option, rather than a weighted mock exam or complete blueprint coverage. Its progress is tracked separately.
 
 Original study material, not an official Microsoft exam simulator or a certification guarantee. General-pack sources record verification on **2026-10-09**; the AB-250 guide and certification pages were checked on **2026-10-13**. Documentation, exam objectives, licensing, availability, and deprecations can change. Recheck the linked sources before an exam or real deployment. Source updates are manual.
 
@@ -25,7 +26,9 @@ Initial dependency installation needs internet access. Studying uses bundled con
 - **Practice quiz:** multiple choice only; feedback and committed results appear after completion. An unfinished quiz can resume; ending it early discards its pending answers.
 - **Practice all:** includes cards that are not due. Session sizes are 10, 20, or 40, with topic, difficulty, format, and tag filters.
 
-Recall uses Again/Hard/Good/Easy after revealing the answer. Wrong MCQs count as Again; correct guesses as Hard (uncertain, **not a miss**); confident correct answers as Good. Good progresses through 1, 3, 7, 14, 30, and 60 days; Easy advances two stages; Hard returns sooner; Again schedules review in ten minutes. Start a later Due or Adaptive session to revisit it.
+Recall uses **Again (1)** and **Good (2)** after revealing the answer. Press **Space** to reveal, **1** for Again, **2** for Good, and **Enter** to advance after rating. You can also click the buttons. Shortcuts are inactive while typing annotations or using other form controls. The active study card is centered in a wide study area that expands for long answers.
+
+Wrong MCQs count as Again; correct guesses as Hard (uncertain, **not a miss**); confident correct answers as Good. Good progresses through 1, 3, 7, 14, 30, and 60 days; Again schedules review in ten minutes. Historical Hard/Easy ratings and their schedules remain compatible with backups. Start a later Due or Adaptive session to revisit a card.
 
 Mistakes has All mistakes, Guessed, Repeat offenders, and Resolved views. The default repeat rule is five misses in the last ten eligible first attempts; threshold/window are configurable in Settings. Flags automatically resolve after **three consecutive confident Good/Easy successes in separate sessions**. History is retained; cards are **never suspended**. Recent performance is study feedback, not exam readiness.
 

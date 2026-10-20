@@ -3,13 +3,14 @@ import type { Pack } from '../../src/domain';
 import { packs } from '../../src/content/catalog';
 import { validatePack } from '../../src/validation';
 
-const pack = packs[0];
-const certificationPack = packs[1];
+const pack = packs.find(item => item.id === 'd365-contact-center')!;
+const certificationPack = packs.find(item => item.id === 'ab-250-contact-center-ai-engineer')!;
+const practicePack = packs.find(item => item.id === 'ab-250-original-practice')!;
 const clone = () => structuredClone(pack);
 
 describe('content catalog', () => {
   it('keeps the original general pack and installs a separate AB-250 certification pack', () => {
-    expect(packs).toHaveLength(2);
+    expect(packs).toHaveLength(3);
     expect(pack.id).toBe('d365-contact-center');
     expect(pack.topics).toHaveLength(9);
     expect(pack.cards).toHaveLength(250);
@@ -22,6 +23,24 @@ describe('content catalog', () => {
     expect(certificationPack.notes).toHaveLength(46);
     expect(certificationPack.cards.filter(card => card.kind === 'recall')).toHaveLength(157);
     expect(certificationPack.cards.filter(card => card.kind === 'mcq')).toHaveLength(107);
+  });
+
+  it('adds original practice with balanced recall and MCQ coverage in every AB-250 domain', () => {
+    expect(practicePack.topics).toHaveLength(6);
+    expect(practicePack.cards).toHaveLength(36);
+    expect(practicePack.notes).toHaveLength(6);
+    const existingPrompts = new Set([...pack.cards, ...certificationPack.cards].map(card => card.prompt));
+    const existingIds = new Set([...pack.cards, ...certificationPack.cards].map(card => card.id));
+    for (const topic of practicePack.topics) {
+      const cards = practicePack.cards.filter(card => card.topicId === topic.id);
+      expect(cards.filter(card => card.kind === 'recall')).toHaveLength(3);
+      expect(cards.filter(card => card.kind === 'mcq')).toHaveLength(3);
+      expect(practicePack.notes.filter(note => note.topicId === topic.id)).toHaveLength(1);
+    }
+    for (const card of practicePack.cards) {
+      expect(existingPrompts.has(card.prompt)).toBe(false);
+      expect(existingIds.has(card.id)).toBe(false);
+    }
   });
 
   it.each([

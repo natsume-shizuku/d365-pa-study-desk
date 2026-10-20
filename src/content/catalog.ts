@@ -9,6 +9,7 @@ import { experience } from './experience';
 import { operations } from './operations';
 import { implementation } from './implementation';
 import { createAb250Pack } from './ab250';
+import { ab250PracticePack } from './ab250Practice';
 
 const modules = [foundations, setup, routing, voice, telephony, digital, experience, operations, implementation];
 
@@ -25,4 +26,4 @@ const contactCenterPack: Pack = {
   sources: modules.flatMap(module => module.sources),
 };
 
-export const packs: Pack[] = [contactCenterPack, createAb250Pack(contactCenterPack)];
+export const packs: Pack[] = [contactCenterPack, createAb250Pack(contactCenterPack), ab250PracticePack];

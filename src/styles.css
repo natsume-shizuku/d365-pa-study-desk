@@ -247,8 +247,9 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display:
 .segmented { display: inline-flex; gap: 4px; max-width: 100%; flex-wrap: wrap; padding: 4px; border: 1px solid var(--cp-border); border-radius: 10px; background: var(--cp-bg-elevated); }
 .segmented button { flex: 1 1 auto; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 6px; background: none; color: var(--cp-text-soft); font-size: 0.8125rem; }
 .segmented button.active, .segmented button[aria-pressed="true"] { background: var(--cp-accent-soft); color: var(--cp-accent); font-weight: 650; }
-.study-layout { display: grid; gap: 16px; width: 100%; }
-.study-card { min-width: 0; padding: 24px; border: 1px solid var(--cp-border); border-radius: 16px; background: var(--cp-surface); }
+.study-layout { display: grid; gap: 16px; width: 100%; max-width: 1440px; margin-inline: auto; }
+.study-stage { display: grid; align-items: center; min-width: 0; min-height: max(320px, calc(100svh - 300px)); }
+.study-card { width: 100%; min-width: 0; padding: 24px; border: 1px solid var(--cp-border); border-radius: 16px; background: var(--cp-surface); }
 .card-topline { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; color: var(--cp-text-soft); font-size: 0.75rem; }
 .card-prompt { width: 100%; margin-block: 0 16px; font-size: 1.375rem; font-weight: 600; line-height: 1.45; letter-spacing: -0.025em; }
 .card-prompt p, .card-prompt h2 { font: inherit; letter-spacing: inherit; }
@@ -260,7 +261,7 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) { display:
 .checkpoints li { display: flex; align-items: flex-start; gap: 8px; }
 .checkpoints li > svg { flex: 0 0 16px; width: 16px; height: 16px; margin-top: 5px; color: var(--cp-accent); }
 .checkpoints li > span { min-width: 0; }
-.rating-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+.rating-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
 .rating-grid button { min-width: 0; min-height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 12px 8px; font-weight: 600; }
 .rating-grid button:hover:not(:disabled) { border-color: var(--cp-accent); background: var(--cp-accent-soft); }
 .rating-grid small, .rating-grid button span { color: var(--cp-text-soft); font-size: 0.75rem; font-weight: 400; }

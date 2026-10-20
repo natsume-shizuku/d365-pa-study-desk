@@ -15,6 +15,10 @@ const nav = [
 ] as const;
 const percent = (value: number | null) => value === null ? '—' : `${Math.round(value * 100)}%`;
 const noopCatch = () => undefined;
+const recallRatings = [
+  { rating: 'again', key: '1', label: 'Again', description: 'Forgot / incorrect' },
+  { rating: 'good', key: '2', label: 'Good', description: 'Knew the essentials' },
+] as const;
 
 function Sources({ ids, pack }: { ids: string[]; pack: Pack }) {
   return <div className="source-list"><h4>Reference sources</h4>{ids.map(id => {
@@ -157,9 +161,12 @@ function StudyView({ pack, state, update, writable, onNote, topic, setTopic }: {
   });
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (!writable || busy || !card || e.ctrlKey || e.altKey || e.metaKey || (e.target instanceof Element && (e.target.closest('input,textarea,select,button,a,[role="dialog"]')))) return;
-      if (e.code === 'Space' && card.kind === 'recall' && !result) { e.preventDefault(); setRevealed(true); }
-      if (revealed && card.kind === 'recall' && !result && ['1', '2', '3', '4'].includes(e.key)) void rate((['again', 'hard', 'good', 'easy'] as Rating[])[Number(e.key) - 1]);
+      if (!writable || busy || !card || e.repeat || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (e.target instanceof Element && (e.target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="dialog"]')
+        || (e.target.closest('button,a') && !e.target.closest('[data-recall-control]')))) return;
+      if (e.code === 'Space' && card.kind === 'recall' && !result && !(e.target instanceof Element && e.target.closest('button,a'))) { e.preventDefault(); setRevealed(true); }
+      const recallRating = recallRatings.find(item => item.key === e.key);
+      if (revealed && card.kind === 'recall' && !result && recallRating) { e.preventDefault(); void rate(recallRating.rating); }
       if (e.key === 'Enter' && result) void next();
     };
     window.addEventListener('keydown', handler);
@@ -168,17 +175,17 @@ function StudyView({ pack, state, update, writable, onNote, topic, setTopic }: {
 
   if (active && card) return <div className="study-layout"><div className="study-toolbar"><span className="eyebrow">{active.mode} session</span><span>{active.index + 1} / {active.cardIds.length} cards</span></div>
     <div className="progress-track"><div className="progress-fill" style={{ width: `${active.index / active.cardIds.length * 100}%` }} /></div>
-    <article className="study-card"><div className="card-topline"><span className="badge">{pack.topics.find(t => t.id === card.topicId)?.title}</span><span>{card.difficulty} · {card.kind === 'recall' ? 'Recall' : 'Multiple choice'}</span></div>
+    <div className="study-stage"><article className="study-card"><div className="card-topline"><span className="badge">{pack.topics.find(t => t.id === card.topicId)?.title}</span><span>{card.difficulty} · {card.kind === 'recall' ? 'Recall' : 'Multiple choice'}</span></div>
       <h2 className="card-prompt">{card.prompt}</h2>
-      {card.kind === 'recall' && !result && !revealed && <><p className="stat-detail">Say your answer out loud or think through the steps before revealing.</p><button className="button primary" onClick={() => setRevealed(true)}>Reveal answer <span aria-hidden="true">↵</span></button><p className="stat-detail">Shortcut: Space to reveal · 1–4 to rate</p></>}
+      {card.kind === 'recall' && !result && !revealed && <><p className="stat-detail">Say your answer out loud or think through the steps before revealing.</p><button className="button primary" data-recall-control aria-keyshortcuts="Space" onClick={() => setRevealed(true)}>Reveal answer <span aria-hidden="true">Space</span></button><p className="stat-detail">Space to reveal · 1 for Again · 2 for Good</p></>}
       {card.kind === 'mcq' && !result && <><div className="options" role="radiogroup" aria-label="Answer choices">{card.options?.map(option => <button role="radio" aria-checked={choice === option.id} className={`option ${choice === option.id ? 'selected' : ''}`} key={option.id} disabled={busy || !writable} onClick={() => setChoice(option.id)}><strong>{optionLabel(card, option.id)}.</strong> {option.text}</button>)}</div>
         <label className="field"><span><input type="checkbox" checked={guessed} onChange={e => setGuessed(e.target.checked)} disabled={busy || !writable} /> I guessed / I’m not confident</span></label>
         <button className="button primary" disabled={!choice || busy || !writable} onClick={() => void rate(choice !== card.correctOptionId ? 'again' : guessed ? 'hard' : 'good')}>{active.mode === 'quiz' ? 'Save answer & continue' : 'Check answer'} <ArrowRight size={16} /></button></>}
       {(result || (revealed && card.kind === 'recall')) && <>{result && <div className={`notice ${result.rating === 'again' ? 'error' : 'success'}`} role="status">{card.kind === 'mcq' ? result.rating === 'again' ? `Not quite. You chose ${optionLabel(card, result.selectedOptionId)}.` : result.guessed ? 'Correct, but guessed — scheduled for an earlier review.' : 'Correct — nicely done.' : `Recorded: ${result.rating}.`} Saved locally.</div>}
         <CardAnswer card={card} pack={pack} onNote={onNote} />
-        {!result && <div className="rating-grid">{(['again', 'hard', 'good', 'easy'] as Rating[]).map((rating, i) => <button key={rating} className="button secondary" disabled={busy || !writable} onClick={() => void rate(rating)}><strong>{i + 1} · {rating[0].toUpperCase() + rating.slice(1)}</strong><small>{['Forgot / incorrect', 'Partial or uncertain', 'Knew the essentials', 'Clear and effortless'][i]}</small></button>)}</div>}
+        {!result && <div className="rating-grid">{recallRatings.map(({ rating, key, label, description }) => <button key={rating} className={`button secondary ${rating}`} data-recall-control aria-keyshortcuts={key} disabled={busy || !writable} onClick={() => void rate(rating)}><strong>{key} · {label}</strong><small>{description}</small></button>)}</div>}
       </>}
-    </article>
+    </article></div>
     <div className="study-footer"><span>Progress saves after each answer. Leave this tab to pause.</span>{result && <button className="button primary" disabled={busy || !writable} onClick={() => void next()}>{active.index + 1 === active.cardIds.length ? 'Finish session' : 'Next card'}<ArrowRight size={16} /></button>}</div>
     <Annotation key={`${pack.id}:${card.id}`} id={`${pack.id}:${card.id}`} packId={pack.id} state={state} update={update} writable={writable} />
     <button className="button ghost small" disabled={busy || !writable} onClick={() => { if (confirm(active.mode === 'quiz' ? 'End this quiz? Unfinished quiz answers will not count toward progress.' : 'End this session? Answers already recorded will be kept.')) void run(() => update(current => ({ ...current, session: null }))); }}>End session early</button>

@@ -72,6 +72,8 @@ From this project folder, run `npm test`, `npm run build`, then `npm run test:e2
 
 The AB-250 pack has six weighted exam domains, 264 cards (157 recall / 107 MCQ), and 46 notes. It is assembled in [src/content/ab250.ts](src/content/ab250.ts) from the existing sourced implementation material plus certification-blueprint cards and notes grounded in Microsoft's current study guide.
 
+The separate `ab-250-original-practice` pack in [src/content/ab250Practice.ts](src/content/ab250Practice.ts) contains 36 original cards (18 recall / 18 MCQ), six notes, and 19 Microsoft Learn sources reviewed on **2026-10-19**. Its six domains each have three recall and three MCQ cards. The percentages in topic titles are official exam weight ranges, not this pack's question distribution. It supplements the larger certification pack; it does not claim complete blueprint coverage. Keep its IDs and progress independent of the existing packs.
+
 When adding a pack, select fixtures by stable ID, retain existing pack quotas, and add appropriate expectations for the new pack. Keep generic schema/reference validation running for every pack; do not force unrelated subjects to match Contact Center quotas or disable validation to pass. Review other tests for Contact Center-specific fixtures and add pack-switching/isolation coverage as needed.
 
 Finally, inspect the new material in the UI: filters, answer reveal, all four MCQ rationales, related notes, source links, and annotations. Back up existing progress before testing content upgrades; check that unchanged IDs retain history and a changed revision is offered for review. No Anki import/export or pack installation through backup restore is implemented.

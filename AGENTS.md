@@ -14,6 +14,7 @@ The catalog is assembled in [src/content/catalog.ts](src/content/catalog.ts).
 
 - `d365-contact-center`: practical Dynamics 365 Contact Center implementation pack with 9 topics, 250 cards (150 recall and 100 MCQ), and 40 notes.
 - `ab-250-contact-center-ai-engineer`: certification-focused pack with the 6 official AB-250 weighted domains, 264 cards (157 recall and 107 MCQ), and 46 notes. [src/content/ab250.ts](src/content/ab250.ts) reclassifies the sourced general material and adds 14 blueprint cards plus 6 blueprint notes.
+- `ab-250-original-practice`: supplemental original practice with 36 cards (18 recall and 18 MCQ), 6 notes, and 19 Microsoft Learn sources reviewed on 2026-10-19. [src/content/ab250Practice.ts](src/content/ab250Practice.ts) gives equal practice to all six domains; it is not a weighted mock exam or complete blueprint coverage.
 
 Keep these packs separate. Do not flatten their topics or learner histories together. The AB-250 taxonomy comes from Microsoft's official certification and study-guide pages; it is not a model-invented exam outline.
 
@@ -74,6 +75,7 @@ Do not remove migration behavior or change backup semantics without adding unit 
 - Maintain keyboard access, visible focus, 44px touch targets, reduced-motion handling, and no horizontal overflow from 320px mobile through wide desktop.
 - Do not display internal option IDs. [src/optionLabels.ts](src/optionLabels.ts) derives visible A-D labels from option order.
 - Do not constrain study questions or note prose to an unnecessarily narrow text column; the user prefers efficient use of wide screens.
+- Center active study cards in the available study area, keeping room for long answers. Recall ratings are Again (1) and Good (2); preserve legacy Hard/Easy data and MCQ guessed-answer behavior.
 
 ## Persistence and Runtime Boundaries
 

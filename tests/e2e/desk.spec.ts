@@ -1,11 +1,11 @@
 import { Buffer } from 'node:buffer';
 import { test as base, expect, type Locator, type Page } from '@playwright/test';
 import { packs } from '../../src/content/catalog';
-import { defaults, type Card, type LearnerState } from '../../src/domain';
+import { defaults, type Card, type LearnerState, type Pack } from '../../src/domain';
 
 const origin = 'http://localhost:4174';
-const pack = packs[0];
-const certificationPack = packs[1];
+const pack = packs.find(item => item.id === 'd365-contact-center')!;
+const practicePack = packs.find(item => item.id === 'ab-250-original-practice')!;
 const firstNote = pack.notes[0];
 const annotationLabel = 'Your personal annotation';
 const guessedLabel = 'I guessed / I’m not confident';
@@ -78,11 +78,11 @@ async function start(page: Page, format: 'Recall' | 'Multiple choice', quiz = fa
   await expect(page.getByText('1 / 10 cards', { exact: true })).toBeVisible();
 }
 
-async function activeCard(page: Page): Promise<Card> {
+async function activeCard(page: Page, installedPack: Pack = pack): Promise<Card> {
   const heading = page.locator('.study-card').getByRole('heading', { level: 2 });
   await expect(heading).toBeVisible();
   const prompt = (await heading.innerText()).trim();
-  const matches = pack.cards.filter(card => card.prompt === prompt);
+  const matches = installedPack.cards.filter(card => card.prompt === prompt);
   expect(matches, `The rendered prompt must uniquely identify a catalog card: ${prompt}`).toHaveLength(1);
   return matches[0];
 }
@@ -133,11 +133,11 @@ async function uploadBackup(page: Page, buffer: Buffer) {
   await expect(input).toHaveValue('');
 }
 
-async function expectSources(container: Locator, ids: string[]) {
+async function expectSources(container: Locator, ids: string[], installedPack: Pack = pack) {
   expect(ids.length).toBeGreaterThan(0);
   await expect(container.getByRole('heading', { name: 'Reference sources', exact: true })).toBeVisible();
   for (const id of ids) {
-    const source = pack.sources.find(item => item.id === id);
+    const source = installedPack.sources.find(item => item.id === id);
     if (!source) throw new Error(`Missing source ${id}`);
     const link = container.getByRole('link').filter({ hasText: source.title });
     await expect(link).toHaveCount(1);
@@ -168,7 +168,8 @@ test('empty dashboard has no invented performance or history', async ({ page }) 
   expect(await stateOf(page)).toEqual(defaults);
 });
 
-test('AB-250 is a separate selectable pack with isolated annotations and scoped export', async ({ page }) => {
+for (const certificationPack of [packs.find(item => item.id === 'ab-250-contact-center-ai-engineer')!, practicePack]) {
+test(`${certificationPack.title} has isolated annotations and scoped export`, async ({ page }) => {
   const packSelect = page.getByRole('combobox', { name: 'Study pack', exact: true });
   await packSelect.selectOption(certificationPack.id);
   await expect(page.getByText(`${certificationPack.cards.length} cards · ${certificationPack.notes.length} field notes`, { exact: true })).toBeVisible();
@@ -200,6 +201,81 @@ test('AB-250 is a separate selectable pack with isolated annotations and scoped 
   expect(backup.state.events).toEqual([]);
   expect(backup.state.schedules).toEqual([]);
 });
+}
+
+test('original practice answers show explanations and its restore preserves another pack’s learning and session', async ({ page }) => {
+  const packSelect = page.getByRole('combobox', { name: 'Study pack', exact: true });
+  await packSelect.selectOption(practicePack.id);
+  await start(page, 'Multiple choice');
+  const card = await activeCard(page, practicePack);
+  await choose(page, card);
+  await page.getByRole('button', { name: 'Check answer', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('Correct — nicely done. Saved locally.');
+  const answer = page.locator('.study-card .card-answer');
+  await expect(answer.getByText(card.answer, { exact: true })).toBeVisible();
+  for (const option of card.options!) await expect(answer.getByText(option.rationale, { exact: true })).toBeVisible();
+  await expectSources(answer, card.sourceIds, practicePack);
+  await annotate(page, 'Original practice reminder.');
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'End session early', exact: true }).click();
+  await settings(page);
+  const original = await stateOf(page);
+  const backup = await downloadBytes(page, page.getByRole('button', { name: 'Export backup', exact: true }));
+  expect(original.events[0]).toMatchObject({ packId: practicePack.id, cardId: card.id, rating: 'good' });
+  expect(original.session).toBeNull();
+
+  await packSelect.selectOption(pack.id);
+  await navigate(page, 'Dashboard');
+  await expect(stat(page, 'Study coverage')).toHaveText(`0 / ${pack.cards.length}`);
+  await start(page, 'Recall');
+  await page.getByRole('button', { name: 'Reveal answer', exact: true }).click();
+  await page.getByRole('button', { name: '1 · Again Forgot / incorrect', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('Recorded: again. Saved locally.');
+  await annotate(page, 'Keep this general-pack reminder.');
+  const before = await stateOf(page);
+  await settings(page);
+  await uploadBackup(page, backup);
+  const dialog = page.getByRole('dialog', { name: 'Restore a backup', exact: true });
+  await downloadBytes(page, dialog.getByRole('button', { name: 'Download safety backup', exact: true }));
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Replace with backup', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('Backup restored successfully.');
+  const after = await stateOf(page);
+  for (const key of ['events', 'schedules', 'annotations'] as const) {
+    expect(after[key].filter(item => item.packId === pack.id)).toEqual(before[key].filter(item => item.packId === pack.id));
+    expect(after[key].filter(item => item.packId === practicePack.id)).toEqual(original[key]);
+  }
+  expect(after.session).toEqual(before.session);
+});
+
+for (const width of [1920, 768, 320]) {
+  test(`active study card is centered and stays readable at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await start(page, 'Recall');
+    const geometry = await page.locator('.study-stage').evaluate(stage => {
+      const area = stage.getBoundingClientRect();
+      const card = stage.querySelector('.study-card')!.getBoundingClientRect();
+      return { topGap: card.top - area.top, bottomGap: area.bottom - card.bottom,
+        left: card.left, right: card.right, width: card.width, viewport: document.documentElement.clientWidth };
+    });
+    expect(Math.abs(geometry.topGap - geometry.bottomGap)).toBeLessThanOrEqual(1);
+    expect(Math.abs(geometry.left - (geometry.viewport - geometry.right))).toBeLessThanOrEqual(1);
+    expect(geometry.width).toBeGreaterThanOrEqual(width * 0.7);
+    expect(geometry.left).toBeGreaterThanOrEqual(0);
+    expect(geometry.right).toBeLessThanOrEqual(geometry.viewport);
+    if (width === 1920) await page.screenshot({ path: testInfo.outputPath('centered-study-card.png') });
+    await page.getByRole('button', { name: 'Reveal answer', exact: true }).click();
+    await expect(page.locator('.rating-grid button')).toHaveCount(2);
+    for (const button of await page.locator('.rating-grid button').all()) {
+      await button.scrollIntoViewIfNeeded();
+      const box = await button.boundingBox();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+      await button.click({ trial: true });
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    expect((await stateOf(page)).events).toEqual([]);
+  });
+}
 
 test('recall Again updates history, reload resumes the answered card, and Next advances once', async ({ page }) => {
   await start(page, 'Recall');
@@ -327,7 +403,7 @@ test('repeated misses persist as a tag without suspending the card, even after o
   expect((await activeCard(page)).id).toBe(card.id);
   await page.getByRole('button', { name: 'Reveal answer', exact: true }).click();
   await expect(page.getByText(card.answer, { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '3 · Good Knew the essentials', exact: true }).click();
+  await page.getByRole('button', { name: '2 · Good Knew the essentials', exact: true }).click();
   await expect(page.getByRole('status')).toHaveText('Recorded: good. Saved locally.');
   await page.getByRole('button', { name: 'Finish session', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Session complete', exact: true })).toBeVisible();
@@ -518,18 +594,42 @@ test('keyboard shortcuts reveal, rate, and advance but do not fire while typing 
   await page.keyboard.press('Space');
   await expect(page.getByRole('button', { name: 'Reveal answer', exact: true })).toBeVisible();
   await page.getByRole('main').focus();
+  await page.keyboard.press('1');
+  await page.keyboard.press('2');
+  expect((await stateOf(page)).events).toEqual([]);
   await page.keyboard.press('Space');
   await expect(page.getByRole('heading', { name: 'What to remember', exact: true })).toBeVisible();
+  await expect(page.locator('.rating-grid button')).toHaveCount(2);
+  await expect(page.getByRole('button', { name: '2 · Good Knew the essentials', exact: true })).toHaveAttribute('aria-keyshortcuts', '2');
   await annotation.focus();
   await page.keyboard.type('1234');
   expect((await stateOf(page)).events).toEqual([]);
   await expect(page.getByRole('button', { name: 'Next card', exact: true })).toHaveCount(0);
   await page.getByRole('main').focus();
+  await page.keyboard.press('3');
+  await page.keyboard.press('4');
+  expect((await stateOf(page)).events).toEqual([]);
   await page.keyboard.press('1');
   await expect(page.getByRole('status')).toHaveText('Recorded: again. Saved locally.');
+  await page.keyboard.press('2');
+  expect((await stateOf(page)).events).toHaveLength(1);
   await page.keyboard.press('Enter');
   await expect(page.getByText('2 / 10 cards', { exact: true })).toBeVisible();
   expect((await stateOf(page)).events).toHaveLength(1);
+  await page.getByRole('button', { name: 'Reveal answer', exact: true }).click();
+  await page.getByRole('button', { name: '1 · Again Forgot / incorrect', exact: true }).focus();
+  await page.keyboard.press('2');
+  await expect(page.getByRole('status')).toHaveText('Recorded: good. Saved locally.');
+  const saved = await stateOf(page);
+  expect(saved.events.map(event => event.rating)).toEqual(['again', 'good']);
+  const good = saved.events[1];
+  expect(saved.schedules.find(item => item.cardId === good.cardId)!.due - good.at).toBe(24 * 60 * 60_000);
+  await page.getByRole('button', { name: 'Next card', exact: true }).click();
+  await page.getByRole('button', { name: 'Reveal answer', exact: true }).click();
+  await page.getByRole('button', { name: '1 · Again Forgot / incorrect', exact: true }).focus();
+  await page.keyboard.press('Space');
+  await expect(page.getByRole('status')).toHaveText('Recorded: again. Saved locally.');
+  expect((await stateOf(page)).events.map(event => event.rating)).toEqual(['again', 'good', 'again']);
 });
 
 test('source links are safe and card dialog traps focus, closes on Escape, and restores focus', async ({ page }) => {
